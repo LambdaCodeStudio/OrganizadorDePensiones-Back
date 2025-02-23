@@ -88,3 +88,5 @@ connectDB()
     console.error('Error al iniciar servidor:', err);
     process.exit(1);
   });
+
+module.exports = app;
