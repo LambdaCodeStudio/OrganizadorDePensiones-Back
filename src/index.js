@@ -14,9 +14,6 @@ const MongoStore = require('connect-mongo');
 
 const app = express();
 
-// Configuración para Vercel
-app.set('trust proxy', 1);
-
 // Middlewares básicos
 app.use(cors(corsOptions));
 app.use(express.json());
@@ -24,10 +21,20 @@ app.use(cookieParser());
 
 // Seguridad
 app.use(helmet({
-  contentSecurityPolicy: false, // Ajuste para Vercel
-  crossOriginEmbedderPolicy: false,
-  crossOriginOpenerPolicy: false,
-  crossOriginResourcePolicy: false
+  contentSecurityPolicy: true,
+  crossOriginEmbedderPolicy: true,
+  crossOriginOpenerPolicy: true,
+  crossOriginResourcePolicy: true,
+  dnsPrefetchControl: true,
+  frameguard: true,
+  hidePoweredBy: true,
+  hsts: true,
+  ieNoOpen: true,
+  noSniff: true,
+  originAgentCluster: true,
+  permittedCrossDomainPolicies: true,
+  referrerPolicy: true,
+  xssFilter: true
 }));
 
 app.use(mongoSanitize());
@@ -41,7 +48,7 @@ const limiter = rateLimit({
 app.use(limiter);
 app.use(dosProtection);
 
-// Sesión con configuración para entorno serverless
+// Cookies y Session
 app.use(session({
   secret: process.env.SESSION_SECRET,
   name: 'sessionId',
@@ -52,7 +59,7 @@ app.use(session({
     ttl: 24 * 60 * 60 // 1 día
   }),
   cookie: {
-    secure: process.env.NODE_ENV === 'production',
+    secure: true,
     httpOnly: true,
     sameSite: 'strict',
     maxAge: 3600000
@@ -71,23 +78,13 @@ app.use((req, res, next) => {
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/cleaning', require('./routes/cleaning'));
 
-// Ruta de prueba para Vercel
-app.get('/api', (req, res) => {
-  res.json({ message: 'Backend funcionando correctamente' });
-});
+const PORT = process.env.PORT || 4000;
 
-// Exportar para Vercel
-module.exports = app;
-
-// Conexión a la base de datos solo si se ejecuta localmente
-if (require.main === module) {
-  connectDB()
-    .then(() => {
-      const PORT = process.env.PORT || 4000;
-      app.listen(PORT, () => console.log(`Servidor en puerto ${PORT}`));
-    })
-    .catch(err => {
-      console.error('Error al iniciar servidor:', err);
-      process.exit(1);
-    });
-}
+connectDB()
+  .then(() => {
+    app.listen(PORT, () => console.log(`Servidor en puerto ${PORT}`));
+  })
+  .catch(err => {
+    console.error('Error al iniciar servidor:', err);
+    process.exit(1);
+  });
