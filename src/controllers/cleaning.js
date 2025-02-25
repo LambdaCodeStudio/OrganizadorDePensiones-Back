@@ -1,4 +1,5 @@
 // controllers/cleaning.js
+const mongoose = require('mongoose');
 const CleaningTask = require('../models/cleaningTask');
 const User = require('../models/user');
 
@@ -55,6 +56,8 @@ const getTasks = async (req, res) => {
 };
 
 // Función mejorada de rotación de tareas
+// Reemplaza completamente la función rotateAssignments en controllers/cleaning.js
+
 const rotateAssignments = async (req, res) => {
   try {
     console.log('Iniciando rotación de tareas con distribución inteligente');
@@ -127,8 +130,16 @@ const rotateAssignments = async (req, res) => {
 
     // Reiniciar métricas de carga de trabajo actual
     availableUsers.forEach(user => {
-      userMetrics[user._id] = userMetrics[user._id] || {};
-      userMetrics[user._id].currentWorkload = 0;
+      const userId = user._id.toString();
+      userMetrics[userId] = userMetrics[userId] || {
+        totalHistoricalTasks: 0,
+        completedTasks: 0,
+        incompleteOrRejectedTasks: 0,
+        completionRate: 1,
+        lastAssignedAreas: {},
+        areaAssignmentCounts: {}
+      };
+      userMetrics[userId].currentWorkload = 0;
     });
 
     // Asignar tareas por prioridad (primero áreas más difíciles)
@@ -867,6 +878,9 @@ const rejectSwapRequest = async (req, res) => {
   }
 };
 
+// Reemplaza completamente esta función en controllers/cleaning.js
+
+// Función para seleccionar responsables óptimos para un área
 function selectResponsiblesForArea(areaInfo, availableUsers, userMetrics, targetWorkload) {
   const selectedResponsibles = [];
   const area = areaInfo.area;
@@ -956,23 +970,6 @@ function selectResponsiblesForArea(areaInfo, availableUsers, userMetrics, target
   console.log(`Asignados para ${area}: ${selectedResponsibles.length} usuarios`);
   return selectedResponsibles;
 }
-
-// Modificación adicional en rotateAssignments para evitar errores con userMetrics
-// Dentro de la función rotateAssignments, modifica esta parte:
-
-// Reiniciar métricas de carga de trabajo actual
-availableUsers.forEach(user => {
-  const userId = user._id.toString();
-  userMetrics[userId] = userMetrics[userId] || {
-    totalHistoricalTasks: 0,
-    completedTasks: 0,
-    incompleteOrRejectedTasks: 0,
-    completionRate: 1,
-    lastAssignedAreas: {},
-    areaAssignmentCounts: {}
-  };
-  userMetrics[userId].currentWorkload = 0;
-});
 
 module.exports = {
   getTasks,
