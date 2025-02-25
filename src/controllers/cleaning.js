@@ -59,8 +59,26 @@ const rotateAssignments = async (req, res) => {
   try {
     console.log('Iniciando rotación de tareas con distribución inteligente');
     
-    // 1. Obtener usuarios disponibles
-    const availableUsers = await User.find({ availableNextWeek: true }, '_id fullName');
+    // Opcionalmente usar los IDs de usuario enviados desde el frontend si están disponibles
+    const userIds = req.body.userIds || [];
+    console.log(`IDs de usuarios recibidos: ${userIds.length > 0 ? userIds.join(', ') : 'ninguno'}`);
+    
+    // 1. Obtener usuarios disponibles (usar los IDs de usuario si se proporcionaron)
+    let availableUsers;
+    
+    if (userIds && userIds.length > 0) {
+      // Filtrar por los IDs proporcionados Y que estén disponibles
+      availableUsers = await User.find({ 
+        _id: { $in: userIds },
+        availableNextWeek: true 
+      }, '_id fullName');
+    } else {
+      // Usar todos los usuarios disponibles
+      availableUsers = await User.find({ 
+        availableNextWeek: true 
+      }, '_id fullName');
+    }
+    
     console.log(`Usuarios disponibles: ${availableUsers.length}`);
     
     if (availableUsers.length < 2) {
@@ -252,66 +270,6 @@ function calculateUserMetrics(taskHistory, availableUsers) {
   });
   
   return metrics;
-}
-
-// Función para seleccionar responsables óptimos para un área
-function selectResponsiblesForArea(areaInfo, availableUsers, userMetrics, targetWorkload) {
-  const selectedResponsibles = [];
-  const area = areaInfo.area;
-  const peopleNeeded = areaInfo.peopleNeeded;
-  
-  // Crear una lista temporal de usuarios disponibles con puntajes calculados
-  const scoredUsers = availableUsers.map(user => {
-    const userId = user._id.toString();
-    const metrics = userMetrics[userId];
-    
-    // Factores a considerar:
-    // 1. ¿Cuándo fue la última vez que el usuario hizo esta tarea? (más tiempo = mejor)
-    const daysSinceLastAssignment = metrics.lastAssignedAreas[area] 
-      ? Math.floor((new Date() - new Date(metrics.lastAssignedAreas[area])) / (1000 * 60 * 60 * 24)) 
-      : 365; // Si nunca ha hecho esta tarea, alto puntaje
-    
-    // 2. ¿Cuántas veces ha hecho esta tarea en total? (menos = mejor)
-    const areaAssignmentCount = metrics.areaAssignmentCounts[area] || 0;
-    
-    // 3. Carga de trabajo actual vs. objetivo (menos carga = mejor)
-    const workloadDifference = targetWorkload - (metrics.currentWorkload || 0);
-    
-    // 4. Tasa de completado de tareas (mayor tasa = mejor)
-    const completionRateBonus = metrics.completionRate * 3; // Factor de peso para la tasa de completado
-    
-    // 5. Número total de tareas históricas (menos = mejor)
-    const totalTasksRatio = metrics.totalHistoricalTasks / 
-      (Math.max(...Object.values(userMetrics).map(m => m.totalHistoricalTasks || 0)) || 1);
-    
-    // Calcular puntaje final (mayor = mejor candidato)
-    const score = 
-      (daysSinceLastAssignment * 0.2) + // Factor de tiempo desde última asignación
-      ((10 - areaAssignmentCount) * 0.2) + // Factor de frecuencia de asignación
-      (workloadDifference * 0.3) + // Factor de balance de carga 
-      (completionRateBonus * 0.2) + // Factor de tasa de completado
-      ((1 - totalTasksRatio) * 0.1); // Factor de total histórico
-      
-    return {
-      user,
-      userId: userId,
-      score
-    };
-  });
-  
-  // Ordenar usuarios por puntaje (descendente)
-  scoredUsers.sort((a, b) => b.score - a.score);
-  
-  // Seleccionar los mejores candidatos
-  for (let i = 0; i < peopleNeeded; i++) {
-    if (scoredUsers.length > 0) {
-      const selected = scoredUsers.shift();
-      selectedResponsibles.push(selected.userId);
-    }
-  }
-  
-  console.log(`Asignados para ${area}: ${selectedResponsibles.length} usuarios`);
-  return selectedResponsibles;
 }
 
 // Función para seleccionar verificadores
@@ -631,14 +589,20 @@ const updateUserAvailability = async (req, res) => {
   try {
     const { userId } = req.params;
     const { available } = req.body;
+    
+    // Asegurar que el userId es válido para MongoDB
+    if (!mongoose.Types.ObjectId.isValid(userId)) {
+      return res.status(400).json({ error: 'ID de usuario inválido' });
+    }
+    
     const user = await User.findById(userId);
     
     if (!user) {
       return res.status(404).json({ error: 'Usuario no encontrado' });
     }
  
-    // Verificar permisos
-    if (!req.user.isAdmin && req.user.id !== userId) {
+    // Verificar permisos (comparando string con string)
+    if (!req.user.isAdmin && req.user.id.toString() !== userId.toString()) {
       return res.status(403).json({ error: 'No tienes permiso para actualizar este usuario' });
     }
  
@@ -903,6 +867,113 @@ const rejectSwapRequest = async (req, res) => {
   }
 };
 
+function selectResponsiblesForArea(areaInfo, availableUsers, userMetrics, targetWorkload) {
+  const selectedResponsibles = [];
+  const area = areaInfo.area;
+  const peopleNeeded = areaInfo.peopleNeeded;
+  
+  // Crear una lista temporal de usuarios disponibles con puntajes calculados
+  const scoredUsers = availableUsers.map(user => {
+    const userId = user._id.toString();
+    const metrics = userMetrics[userId] || {};
+    
+    // Factores a considerar:
+    // 1. ¿Cuándo fue la última vez que el usuario hizo esta tarea? (más tiempo = mejor)
+    const daysSinceLastAssignment = metrics.lastAssignedAreas && metrics.lastAssignedAreas[area] 
+      ? Math.floor((new Date() - new Date(metrics.lastAssignedAreas[area])) / (1000 * 60 * 60 * 24)) 
+      : 365; // Si nunca ha hecho esta tarea, alto puntaje
+    
+    // 2. ¿Cuántas veces ha hecho esta tarea en total? (menos = mejor)
+    const areaAssignmentCount = metrics.areaAssignmentCounts && metrics.areaAssignmentCounts[area] 
+      ? metrics.areaAssignmentCounts[area] 
+      : 0;
+    
+    // 3. Carga de trabajo actual vs. objetivo (menos carga = mejor)
+    const workloadDifference = targetWorkload - (metrics.currentWorkload || 0);
+    
+    // 4. Tasa de completado de tareas (mayor tasa = mejor)
+    const completionRateBonus = (metrics.completionRate || 1) * 3; // Factor de peso para la tasa de completado
+    
+    // 5. Número total de tareas históricas (menos = mejor)
+    const maxHistoricalTasks = Math.max(...Object.values(userMetrics)
+      .map(m => m.totalHistoricalTasks || 0)) || 1;
+    const totalTasksRatio = (metrics.totalHistoricalTasks || 0) / maxHistoricalTasks;
+    
+    // 6. NUEVO: Factor de aleatorización para romper patrones recurrentes
+    const randomFactor = Math.random() * 2; // Valor aleatorio entre 0 y 2
+    
+    // Penalización directa para evitar asignaciones repetidas
+    const recentAssignmentPenalty = metrics.lastAssignedAreas && 
+      metrics.lastAssignedAreas[area] && 
+      daysSinceLastAssignment < 30 ? -10 : 0;
+    
+    // Calcular puntaje final (mayor = mejor candidato)
+    const score = 
+      (daysSinceLastAssignment * 0.2) + // Factor de tiempo desde última asignación
+      ((10 - areaAssignmentCount) * 0.25) + // Factor de frecuencia de asignación (mayor peso)
+      (workloadDifference * 0.3) + // Factor de balance de carga 
+      (completionRateBonus * 0.15) + // Factor de tasa de completado (menor peso)
+      ((1 - totalTasksRatio) * 0.1) + // Factor de total histórico
+      (randomFactor * 0.15) + // Nuevo factor aleatorio para introducir variación
+      recentAssignmentPenalty; // Penalización para evitar asignaciones repetidas
+      
+    return {
+      user,
+      userId: userId,
+      score,
+      metrics: {
+        daysSinceLastAssignment,
+        areaAssignmentCount,
+        workloadDifference,
+        completionRate: metrics.completionRate || 1,
+        totalTasksRatio
+      }
+    };
+  });
+  
+  // Ordenar usuarios por puntaje (descendente)
+  scoredUsers.sort((a, b) => b.score - a.score);
+  
+  // Debug para ver puntuaciones (solo en desarrollo)
+  if (process.env.NODE_ENV === 'development') {
+    console.log(`Puntuaciones para ${area}:`, 
+      scoredUsers.map(u => ({ 
+        nombre: u.user.fullName, 
+        puntuación: u.score.toFixed(2),
+        métricas: u.metrics
+      }))
+    );
+  }
+  
+  // Seleccionar los mejores candidatos
+  for (let i = 0; i < peopleNeeded; i++) {
+    if (scoredUsers.length > 0) {
+      const selected = scoredUsers.shift();
+      selectedResponsibles.push(selected.userId);
+    }
+  }
+  
+  console.log(`Asignados para ${area}: ${selectedResponsibles.length} usuarios`);
+  return selectedResponsibles;
+}
+
+// Modificación adicional en rotateAssignments para evitar errores con userMetrics
+// Dentro de la función rotateAssignments, modifica esta parte:
+
+// Reiniciar métricas de carga de trabajo actual
+availableUsers.forEach(user => {
+  const userId = user._id.toString();
+  userMetrics[userId] = userMetrics[userId] || {
+    totalHistoricalTasks: 0,
+    completedTasks: 0,
+    incompleteOrRejectedTasks: 0,
+    completionRate: 1,
+    lastAssignedAreas: {},
+    areaAssignmentCounts: {}
+  };
+  userMetrics[userId].currentWorkload = 0;
+});
+
 module.exports = {
   getTasks,
   rotateAssignments,
@@ -916,5 +987,6 @@ module.exports = {
   getSwapRequests,
   respondToSwapRequest,
   rejectSwapRequest,
-  acceptSwapRequest
+  acceptSwapRequest,
+  selectResponsiblesForArea
 };
