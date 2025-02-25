@@ -8,7 +8,6 @@ const cookieParser = require('cookie-parser');
 const session = require('express-session');
 const rateLimit = require('express-rate-limit');
 const hpp = require('hpp');
-const { dosProtection } = require('./middleware/security');
 const corsOptions = require('./config/cors');
 const MongoStore = require('connect-mongo');
 
@@ -48,7 +47,6 @@ const limiter = rateLimit({
   legacyHeaders: false
 });
 app.use(limiter);
-app.use(dosProtection);
 
 // Cookies y Session
 app.use(session({
