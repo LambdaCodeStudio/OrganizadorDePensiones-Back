@@ -54,40 +54,14 @@ const getTasks = async (req, res) => {
   }
 };
 
-// Asignar verificadores con lógica adaptativa
-const assignVerifiers = (allUsers, taskResponsibles) => {
-  let availableVerifiers;
-  
-  if (allUsers.length <= 3) {
-    // Si hay 3 o menos usuarios, todos pueden ser verificadores
-    availableVerifiers = allUsers;
-  } else {
-    // Si hay más de 3 usuarios, intentar evitar que los responsables sean verificadores
-    availableVerifiers = allUsers.filter(user => 
-      !taskResponsibles.some(responsible => 
-        responsible.toString() === user._id.toString()
-      )
-    );
-
-    // Si no hay suficientes verificadores disponibles, usar todos los usuarios
-    if (availableVerifiers.length < 3) {
-      availableVerifiers = allUsers;
-    }
-  }
-
-  // Asegurar que tengamos al menos un verificador
-  const numVerifiers = Math.min(3, allUsers.length);
-  const shuffled = [...availableVerifiers].sort(() => 0.5 - Math.random());
-  return shuffled.slice(0, numVerifiers).map(user => user._id);
-};
-
-// Rotar asignaciones
+// Función mejorada de rotación de tareas
 const rotateAssignments = async (req, res) => {
   try {
-    console.log('Iniciando rotación de tareas');
+    console.log('Iniciando rotación de tareas con distribución inteligente');
     
+    // 1. Obtener usuarios disponibles
     const availableUsers = await User.find({ availableNextWeek: true }, '_id fullName');
-    console.log('Usuarios disponibles encontrados:', availableUsers);
+    console.log(`Usuarios disponibles: ${availableUsers.length}`);
     
     if (availableUsers.length < 2) {
       return res.status(400).json({ 
@@ -95,59 +69,81 @@ const rotateAssignments = async (req, res) => {
       });
     }
 
-    // Obtener tareas actuales
-    const currentTasks = await CleaningTask.find();
-    const now = new Date();
+    // 2. Obtener historial de tareas previas (incluyendo las actuales)
+    const taskHistory = await CleaningTask.find({})
+      .populate('responsibles', '_id fullName')
+      .populate('temporaryResponsible', '_id fullName')
+      .sort({ endDate: -1 }) // Las más recientes primero
+      .lean();
+    
+    console.log(`Historial de tareas obtenido: ${taskHistory.length} tareas`);
 
-    const areaRequirements = [
-      { area: 'Baño 1', peopleNeeded: 1 },
-      { area: 'Baño 2', peopleNeeded: 1 },
-      { area: 'Baño 3', peopleNeeded: 1 },
-      { area: 'Terraza y Escaleras', peopleNeeded: 1 },
-      { area: 'Orden de Cocina', peopleNeeded: 1 },
-      { area: 'Cocina y Living', peopleNeeded: 2 },
-      { area: 'Basura', peopleNeeded: 1 },
-      { area: 'Cortar el pasto', peopleNeeded: 2 }
+    // 3. Calcular métricas por usuario
+    const userMetrics = calculateUserMetrics(taskHistory, availableUsers);
+    console.log('Métricas de usuario calculadas');
+
+    // 4. Definir áreas y sus características
+    const areaConfig = [
+      { area: 'Baño 1', peopleNeeded: 1, difficulty: 2 },
+      { area: 'Baño 2', peopleNeeded: 1, difficulty: 2 },
+      { area: 'Baño 3', peopleNeeded: 1, difficulty: 2 },
+      { area: 'Terraza y Escaleras', peopleNeeded: 2, difficulty: 3 },
+      { area: 'Orden de Cocina', peopleNeeded: 1, difficulty: 1 },
+      { area: 'Cocina y Living', peopleNeeded: 2, difficulty: 4 },
+      { area: 'Basura', peopleNeeded: 1, difficulty: 1 },
+      { area: 'Cortar el pasto', peopleNeeded: 2, difficulty: 3 }
     ];
 
-    const totalPeopleNeeded = areaRequirements.reduce((sum, area) => sum + area.peopleNeeded, 0);
-    const assignmentMultiplier = Math.ceil(totalPeopleNeeded / availableUsers.length);
-    console.log(`Cada usuario necesitará cubrir aproximadamente ${assignmentMultiplier} tareas`);
-
-    let newTasks = [];
-    let currentUserIndex = 0;
-
-    // Primero, eliminar todas las tareas existentes
+    // 5. Eliminar todas las tareas actuales
     await CleaningTask.deleteMany({});
+    console.log('Tareas anteriores eliminadas');
 
-    for (const areaConfig of areaRequirements) {
-      const frequency = taskFrequencies[areaConfig.area] || 'weekly';
+    // 6. Crear nuevas tareas con distribución inteligente
+    const now = new Date();
+    let newTasks = [];
+
+    // Obtener la carga de trabajo objetivo por usuario
+    const totalDifficulty = areaConfig.reduce((sum, area) => sum + (area.difficulty * area.peopleNeeded), 0);
+    const targetWorkloadPerUser = totalDifficulty / availableUsers.length;
+    console.log(`Carga objetivo por usuario: ${targetWorkloadPerUser.toFixed(2)}`);
+
+    // Reiniciar métricas de carga de trabajo actual
+    availableUsers.forEach(user => {
+      userMetrics[user._id] = userMetrics[user._id] || {};
+      userMetrics[user._id].currentWorkload = 0;
+    });
+
+    // Asignar tareas por prioridad (primero áreas más difíciles)
+    const prioritizedAreas = [...areaConfig].sort((a, b) => b.difficulty - a.difficulty);
+
+    for (const areaInfo of prioritizedAreas) {
+      const frequency = taskFrequencies[areaInfo.area] || 'weekly';
       const endDate = calculateEndDate(now, frequency);
       
-      // Asignar responsables
-      const responsibles = [];
-      for (let i = 0; i < areaConfig.peopleNeeded; i++) {
-        responsibles.push(availableUsers[currentUserIndex % availableUsers.length]._id);
-        currentUserIndex++;
-      }
-
-      // Asignar verificadores evitando los responsables si es posible
-      let availableVerifiers = availableUsers.filter(user => 
-        !responsibles.some(r => r.toString() === user._id.toString())
+      console.log(`Asignando tarea para: ${areaInfo.area} (dificultad: ${areaInfo.difficulty})`);
+      
+      // Seleccionar responsables óptimos para esta área
+      const responsibles = selectResponsiblesForArea(
+        areaInfo, 
+        availableUsers, 
+        userMetrics,
+        targetWorkloadPerUser
       );
+      
+      // Actualizar las cargas de trabajo de los usuarios asignados
+      responsibles.forEach(userId => {
+        userMetrics[userId].currentWorkload += areaInfo.difficulty;
+        userMetrics[userId].tasksAssigned = (userMetrics[userId].tasksAssigned || 0) + 1;
+        userMetrics[userId].lastAssignedAreas = userMetrics[userId].lastAssignedAreas || {};
+        userMetrics[userId].lastAssignedAreas[areaInfo.area] = now;
+      });
 
-      if (availableVerifiers.length < 1) {
-        availableVerifiers = availableUsers;
-      }
+      // Seleccionar verificadores (intentando evitar a los responsables)
+      const verifiers = selectVerifiers(responsibles, availableUsers, userMetrics);
 
-      const numVerifiers = Math.min(3, Math.max(1, availableVerifiers.length));
-      const verifiers = availableVerifiers
-        .sort(() => Math.random() - 0.5)
-        .slice(0, numVerifiers)
-        .map(user => user._id);
-
+      // Crear la nueva tarea
       newTasks.push(new CleaningTask({
-        area: areaConfig.area,
+        area: areaInfo.area,
         frequency,
         responsibles,
         startDate: now,
@@ -156,28 +152,205 @@ const rotateAssignments = async (req, res) => {
       }));
     }
 
-    // Insertar todas las nuevas tareas
     if (newTasks.length > 0) {
       await CleaningTask.insertMany(newTasks);
+      console.log(`${newTasks.length} nuevas tareas creadas`);
     }
 
-    // Obtener todas las tareas actualizadas
+    // Log de distribución final
+    logFinalDistribution(userMetrics, availableUsers);
+
+    // Obtener y devolver las tareas actualizadas
     const populatedTasks = await CleaningTask.find()
       .populate('responsibles', 'fullName')
       .populate('verifiers', 'fullName')
       .populate('temporaryResponsible', 'fullName')
       .populate('verifications.verifier', 'fullName');
 
-    res.json(populatedTasks);
+    return res.json(populatedTasks);
 
   } catch (error) {
     console.error('Error en rotateAssignments:', error);
-    res.status(500).json({ 
+    return res.status(500).json({ 
       error: 'Error al rotar las asignaciones',
       details: error.message 
     });
   }
 };
+
+// Función para calcular métricas por usuario
+function calculateUserMetrics(taskHistory, availableUsers) {
+  const metrics = {};
+  
+  // Inicializar métricas para todos los usuarios disponibles
+  availableUsers.forEach(user => {
+    metrics[user._id] = {
+      totalHistoricalTasks: 0,
+      completedTasks: 0,
+      incompleteOrRejectedTasks: 0,
+      completionRate: 1, // 100% por defecto
+      lastAssignedAreas: {}, // Última vez que se asignó cada área
+      areaAssignmentCounts: {}, // Número de veces que cada área fue asignada
+      preferences: {} // Podría usarse en un futuro para preferencias de los usuarios
+    };
+  });
+
+  // Analizar el historial de tareas
+  taskHistory.forEach(task => {
+    const wasCompleted = task.completed && task.verificationStatus === 'approved';
+    const wasRejected = task.completed && task.verificationStatus === 'rejected';
+    
+    // Registrar métricas para cada responsable
+    task.responsibles.forEach(user => {
+      const userId = user._id.toString();
+      
+      // Omitir usuarios que no están disponibles actualmente
+      if (!metrics[userId]) return;
+      
+      metrics[userId].totalHistoricalTasks++;
+      
+      if (wasCompleted) {
+        metrics[userId].completedTasks++;
+      } else if (wasRejected || task.completed === false) {
+        metrics[userId].incompleteOrRejectedTasks++;
+      }
+      
+      // Actualizar última asignación de esta área
+      if (!metrics[userId].lastAssignedAreas[task.area] || 
+          new Date(task.endDate) > new Date(metrics[userId].lastAssignedAreas[task.area])) {
+        metrics[userId].lastAssignedAreas[task.area] = task.endDate;
+      }
+      
+      // Incrementar contador de asignaciones para esta área
+      metrics[userId].areaAssignmentCounts[task.area] = 
+        (metrics[userId].areaAssignmentCounts[task.area] || 0) + 1;
+    });
+    
+    // También considerar responsables temporales
+    if (task.temporaryResponsible) {
+      const tempUserId = task.temporaryResponsible._id.toString();
+      if (metrics[tempUserId]) {
+        metrics[tempUserId].totalHistoricalTasks++;
+        
+        if (wasCompleted) {
+          metrics[tempUserId].completedTasks++;
+        } else if (wasRejected || task.completed === false) {
+          metrics[tempUserId].incompleteOrRejectedTasks++;
+        }
+      }
+    }
+  });
+  
+  // Calcular tasas de completado
+  Object.keys(metrics).forEach(userId => {
+    const userMetrics = metrics[userId];
+    const totalEvaluable = userMetrics.completedTasks + userMetrics.incompleteOrRejectedTasks;
+    
+    if (totalEvaluable > 0) {
+      userMetrics.completionRate = userMetrics.completedTasks / totalEvaluable;
+    }
+  });
+  
+  return metrics;
+}
+
+// Función para seleccionar responsables óptimos para un área
+function selectResponsiblesForArea(areaInfo, availableUsers, userMetrics, targetWorkload) {
+  const selectedResponsibles = [];
+  const area = areaInfo.area;
+  const peopleNeeded = areaInfo.peopleNeeded;
+  
+  // Crear una lista temporal de usuarios disponibles con puntajes calculados
+  const scoredUsers = availableUsers.map(user => {
+    const userId = user._id.toString();
+    const metrics = userMetrics[userId];
+    
+    // Factores a considerar:
+    // 1. ¿Cuándo fue la última vez que el usuario hizo esta tarea? (más tiempo = mejor)
+    const daysSinceLastAssignment = metrics.lastAssignedAreas[area] 
+      ? Math.floor((new Date() - new Date(metrics.lastAssignedAreas[area])) / (1000 * 60 * 60 * 24)) 
+      : 365; // Si nunca ha hecho esta tarea, alto puntaje
+    
+    // 2. ¿Cuántas veces ha hecho esta tarea en total? (menos = mejor)
+    const areaAssignmentCount = metrics.areaAssignmentCounts[area] || 0;
+    
+    // 3. Carga de trabajo actual vs. objetivo (menos carga = mejor)
+    const workloadDifference = targetWorkload - (metrics.currentWorkload || 0);
+    
+    // 4. Tasa de completado de tareas (mayor tasa = mejor)
+    const completionRateBonus = metrics.completionRate * 3; // Factor de peso para la tasa de completado
+    
+    // 5. Número total de tareas históricas (menos = mejor)
+    const totalTasksRatio = metrics.totalHistoricalTasks / 
+      (Math.max(...Object.values(userMetrics).map(m => m.totalHistoricalTasks || 0)) || 1);
+    
+    // Calcular puntaje final (mayor = mejor candidato)
+    const score = 
+      (daysSinceLastAssignment * 0.2) + // Factor de tiempo desde última asignación
+      ((10 - areaAssignmentCount) * 0.2) + // Factor de frecuencia de asignación
+      (workloadDifference * 0.3) + // Factor de balance de carga 
+      (completionRateBonus * 0.2) + // Factor de tasa de completado
+      ((1 - totalTasksRatio) * 0.1); // Factor de total histórico
+      
+    return {
+      user,
+      userId: userId,
+      score
+    };
+  });
+  
+  // Ordenar usuarios por puntaje (descendente)
+  scoredUsers.sort((a, b) => b.score - a.score);
+  
+  // Seleccionar los mejores candidatos
+  for (let i = 0; i < peopleNeeded; i++) {
+    if (scoredUsers.length > 0) {
+      const selected = scoredUsers.shift();
+      selectedResponsibles.push(selected.userId);
+    }
+  }
+  
+  console.log(`Asignados para ${area}: ${selectedResponsibles.length} usuarios`);
+  return selectedResponsibles;
+}
+
+// Función para seleccionar verificadores
+function selectVerifiers(responsibles, availableUsers, userMetrics) {
+  // Filtrar usuarios disponibles excluyendo a los responsables
+  const potentialVerifiers = availableUsers.filter(user => 
+    !responsibles.includes(user._id.toString())
+  );
+  
+  // Si no hay suficientes usuarios disponibles, usar todos los usuarios
+  if (potentialVerifiers.length < 3) {
+    const allUserIds = availableUsers.map(user => user._id.toString());
+    // Ordenar por tasa de completado (primero los más confiables)
+    allUserIds.sort((a, b) => 
+      (userMetrics[b]?.completionRate || 0) - (userMetrics[a]?.completionRate || 0)
+    );
+    return allUserIds.slice(0, Math.min(3, allUserIds.length));
+  }
+  
+  // Ordenar verificadores por tasa de completado (primero los más confiables)
+  potentialVerifiers.sort((a, b) => 
+    (userMetrics[b._id]?.completionRate || 0) - (userMetrics[a._id]?.completionRate || 0)
+  );
+  
+  // Seleccionar hasta 3 verificadores con la mejor tasa de completado
+  return potentialVerifiers
+    .slice(0, 3)
+    .map(user => user._id.toString());
+}
+
+// Función para registrar distribución final
+function logFinalDistribution(userMetrics, availableUsers) {
+  console.log('----- Distribución final de tareas -----');
+  availableUsers.forEach(user => {
+    const metrics = userMetrics[user._id.toString()];
+    console.log(`${user.fullName}: ${metrics.tasksAssigned || 0} tareas asignadas, carga: ${metrics.currentWorkload?.toFixed(2) || 0}`);
+  });
+  console.log('----------------------------------------');
+}
 
 // Marcar tarea como completada
 const markAsCompleted = async (req, res) => {
@@ -456,7 +629,8 @@ const verifyTask = async (req, res) => {
 // Actualizar disponibilidad de usuario
 const updateUserAvailability = async (req, res) => {
   try {
-    const { userId, available } = req.body;
+    const { userId } = req.params;
+    const { available } = req.body;
     const user = await User.findById(userId);
     
     if (!user) {
@@ -476,10 +650,10 @@ const updateUserAvailability = async (req, res) => {
     console.error('Error en updateUserAvailability:', error);
     res.status(500).json({ error: error.message });
   }
- };
+};
 
- // Obtener solicitudes de intercambio
- const getSwapRequests = async (req, res) => {
+// Obtener solicitudes de intercambio
+const getSwapRequests = async (req, res) => {
   try {
     const userId = req.user.id;
 
@@ -728,8 +902,8 @@ const rejectSwapRequest = async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 };
- 
- module.exports = {
+
+module.exports = {
   getTasks,
   rotateAssignments,
   markAsCompleted,
@@ -743,4 +917,4 @@ const rejectSwapRequest = async (req, res) => {
   respondToSwapRequest,
   rejectSwapRequest,
   acceptSwapRequest
- };
+};

@@ -27,7 +27,8 @@ const cleaningTaskSchema = new mongoose.Schema({
   area: {
     type: String,
     required: [true, 'El área es requerida'],
-    enum: ['Baño 1', 'Baño 2', 'Baño 3', 'Terraza y Escaleras', 'Orden de Cocina', 'Cocina y Living', 'Basura', 'Cortar el pasto']
+    enum: ['Baño 1', 'Baño 2', 'Baño 3', 'Terraza y Escaleras', 'Orden de Cocina', 
+           'Cocina y Living', 'Basura', 'Cortar el pasto']
   },
   frequency: {
     type: String,
@@ -86,6 +87,10 @@ const cleaningTaskSchema = new mongoose.Schema({
     hours24: { type: Boolean, default: false }
   },
   swapRequests: [swapRequestSchema],
+  archived: {
+    type: Boolean,
+    default: false
+  }
 }, {
   timestamps: true
 });

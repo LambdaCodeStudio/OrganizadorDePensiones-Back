@@ -42,8 +42,10 @@ app.use(hpp());
 
 // Rate Limiting
 const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 100
+  windowMs: 15 * 60 * 1000, // 15 minutos
+  max: 100, // límite de 100 peticiones por ventana
+  standardHeaders: true,
+  legacyHeaders: false
 });
 app.use(limiter);
 app.use(dosProtection);
@@ -59,10 +61,10 @@ app.use(session({
     ttl: 24 * 60 * 60 // 1 día
   }),
   cookie: {
-    secure: true,
+    secure: process.env.NODE_ENV === 'production',
     httpOnly: true,
     sameSite: 'strict',
-    maxAge: 3600000
+    maxAge: parseInt(process.env.SESSION_MAXAGE) || 3600000
   }
 }));
 
@@ -78,13 +80,37 @@ app.use((req, res, next) => {
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/cleaning', require('./routes/cleaning'));
 
+// Ruta de control de salud
+app.get('/health', (req, res) => {
+  res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
+// Manejador de rutas no encontradas
+app.use('*', (req, res) => {
+  res.status(404).json({ error: 'Ruta no encontrada' });
+});
+
+// Manejador global de errores
+app.use((err, req, res, next) => {
+  console.error('Error en servidor:', err);
+  res.status(500).json({ 
+    error: 'Error interno del servidor',
+    message: process.env.NODE_ENV === 'development' ? err.message : undefined
+  });
+});
+
 const PORT = process.env.PORT || 4000;
 
-connectDB()
-  .then(() => {
-    app.listen(PORT, () => console.log(`Servidor en puerto ${PORT}`));
-  })
-  .catch(err => {
+// Función para iniciar el servidor
+const startServer = async () => {
+  try {
+    await connectDB();
+    app.listen(PORT, () => console.log(`Servidor ejecutándose en puerto ${PORT}`));
+  } catch (err) {
     console.error('Error al iniciar servidor:', err);
     process.exit(1);
-  });
+  }
+};
+
+// Iniciar el servidor
+startServer();

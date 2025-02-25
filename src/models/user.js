@@ -26,6 +26,25 @@ const userSchema = new mongoose.Schema({
   availableNextWeek: {
     type: Boolean,
     default: true
+  },
+  preferences: {
+    type: Map,
+    of: String,
+    default: {}
+  },
+  stats: {
+    tasksCompleted: {
+      type: Number,
+      default: 0
+    },
+    tasksRejected: {
+      type: Number,
+      default: 0
+    },
+    tasksVerified: {
+      type: Number,
+      default: 0
+    }
   }
 }, { 
   timestamps: true 
