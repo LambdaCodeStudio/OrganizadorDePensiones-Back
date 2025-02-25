@@ -56,8 +56,6 @@ const getTasks = async (req, res) => {
 };
 
 // Función mejorada de rotación de tareas
-// Reemplaza completamente la función rotateAssignments en controllers/cleaning.js
-
 const rotateAssignments = async (req, res) => {
   try {
     console.log('Iniciando rotación de tareas con distribución inteligente');
@@ -877,8 +875,6 @@ const rejectSwapRequest = async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 };
-
-// Reemplaza completamente esta función en controllers/cleaning.js
 
 // Función para seleccionar responsables óptimos para un área
 function selectResponsiblesForArea(areaInfo, availableUsers, userMetrics, targetWorkload) {

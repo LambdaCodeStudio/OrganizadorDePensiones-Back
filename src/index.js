@@ -46,6 +46,7 @@ const limiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false
 });
+
 app.use(limiter);
 
 // Cookies y Session
