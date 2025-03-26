@@ -3,34 +3,6 @@ const User = require('../models/user');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 
-const login = async (req, res) => {
-  try {
-    const user = await User.findOne({ email: req.body.email });
-    if (!user) {
-      return res.status(400).json({ error: 'Usuario no encontrado' });
-    }
-
-    const isMatch = await bcrypt.compare(req.body.password, user.password);
-    if (!isMatch) {
-      return res.status(400).json({ error: 'Contraseña incorrecta' });
-    }
-
-    // Incluir isAdmin en el payload del token
-    const token = jwt.sign({ id: user._id, isAdmin: user.isAdmin }, process.env.JWT_SECRET);
-    res.json({ 
-      token, 
-      user: { 
-        id: user._id, 
-        fullName: user.fullName, 
-        email: user.email,
-        isAdmin: user.isAdmin
-      } 
-    });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-};
-
 const register = async (req, res) => {
   try {
     // Verificar si el usuario ya existe por correo electrónico
@@ -43,13 +15,17 @@ const register = async (req, res) => {
       fullName: req.body.fullName,
       email: req.body.email,
       password: req.body.password,
-      availableNextWeek: true // Por defecto disponible
+      availableNextWeek: true
     });
     
     await user.save();
     
-    // Incluir isAdmin en el payload del token
-    const token = jwt.sign({ id: user._id, isAdmin: user.isAdmin }, process.env.JWT_SECRET);
+    // Incluir isAdmin en el token JWT
+    const token = jwt.sign({ 
+      id: user._id,
+      isAdmin: user.isAdmin 
+    }, process.env.JWT_SECRET);
+    
     res.json({ token, user: { 
       id: user._id, 
       fullName: user.fullName, 
@@ -58,6 +34,38 @@ const register = async (req, res) => {
     }});
   } catch (error) {
     res.status(400).json({ error: error.message });
+  }
+};
+
+const login = async (req, res) => {
+  try {
+    const user = await User.findOne({ email: req.body.email });
+    if (!user) {
+      return res.status(400).json({ error: 'Usuario no encontrado' });
+    }
+
+    const isMatch = await bcrypt.compare(req.body.password, user.password);
+    if (!isMatch) {
+      return res.status(400).json({ error: 'Contraseña incorrecta' });
+    }
+
+    // Incluir isAdmin en el token JWT
+    const token = jwt.sign({ 
+      id: user._id,
+      isAdmin: user.isAdmin
+    }, process.env.JWT_SECRET);
+    
+    res.json({ 
+      token, 
+      user: { 
+        id: user._id, 
+        fullName: user.fullName, 
+        email: user.email,
+        isAdmin: user.isAdmin
+      } 
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
   }
 };
 
