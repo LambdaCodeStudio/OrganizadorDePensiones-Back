@@ -25,9 +25,8 @@ const connectDB = async () => {
       // Tiempo de vida de una conexión de socket inactiva
       socketTimeoutMS: 45000,
       // Tiempo de espera para selección de servidor
-      serverSelectionTimeoutMS: 5000,
-      // Habilitar logs detallados en desarrollo
-      debug: process.env.NODE_ENV === 'development'
+      serverSelectionTimeoutMS: 5000
+      // Eliminar la opción debug que no es soportada
     };
 
     const connection = await mongoose.connect(process.env.MONGODB_URI, options);
