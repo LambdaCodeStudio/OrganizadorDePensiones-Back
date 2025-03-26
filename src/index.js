@@ -16,6 +16,10 @@ let isConnected = false;
 
 const app = express();
 
+// Configurar Express para confiar en los proxys de Vercel
+// Esto es necesario para que express-rate-limit funcione correctamente
+app.set('trust proxy', 1);
+
 // Middlewares básicos
 app.use(cors(corsOptions));
 app.use(express.json());
@@ -53,7 +57,7 @@ const limiter = rateLimit({
 app.use(limiter);
 
 // Cookies y Session
-app.use(session({
+const sessionConfig = {
   secret: process.env.SESSION_SECRET,
   name: 'sessionId',
   resave: false,
@@ -68,7 +72,15 @@ app.use(session({
     sameSite: 'strict',
     maxAge: parseInt(process.env.SESSION_MAXAGE) || 3600000
   }
-}));
+};
+
+// En producción, habilitar proxy para las cookies
+if (process.env.NODE_ENV === 'production') {
+  sessionConfig.cookie.secure = true;
+  sessionConfig.cookie.sameSite = 'none';
+}
+
+app.use(session(sessionConfig));
 
 // Headers adicionales
 app.use((req, res, next) => {
@@ -87,6 +99,7 @@ app.use(async (req, res, next) => {
       isConnected = true;
     } catch (error) {
       console.error('Error al conectar a MongoDB:', error);
+      return res.status(500).json({ error: 'Error al conectar a la base de datos' });
     }
   }
   return next();
