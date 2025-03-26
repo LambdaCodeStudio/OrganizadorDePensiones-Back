@@ -11,6 +11,9 @@ const hpp = require('hpp');
 const corsOptions = require('./config/cors');
 const MongoStore = require('connect-mongo');
 
+// Variable para seguir el estado de la conexión a la DB
+let isConnected = false;
+
 const app = express();
 
 // Middlewares básicos
@@ -75,6 +78,20 @@ app.use((req, res, next) => {
   next();
 });
 
+// Middleware para conectar a la DB en entorno serverless
+app.use(async (req, res, next) => {
+  // Solo conecta si no hay conexión activa
+  if (!isConnected) {
+    try {
+      await connectDB();
+      isConnected = true;
+    } catch (error) {
+      console.error('Error al conectar a MongoDB:', error);
+    }
+  }
+  return next();
+});
+
 // Rutas
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/cleaning', require('./routes/cleaning'));
@@ -100,16 +117,21 @@ app.use((err, req, res, next) => {
 
 const PORT = process.env.PORT || 4000;
 
-// Función para iniciar el servidor
-const startServer = async () => {
-  try {
-    await connectDB();
-    app.listen(PORT, () => console.log(`Servidor ejecutándose en puerto ${PORT}`));
-  } catch (err) {
-    console.error('Error al iniciar servidor:', err);
-    process.exit(1);
-  }
-};
+// Solo inicia el servidor si no estamos en serverless (Vercel)
+if (process.env.NODE_ENV !== 'production') {
+  const startServer = async () => {
+    try {
+      await connectDB();
+      isConnected = true;
+      app.listen(PORT, () => console.log(`Servidor ejecutándose en puerto ${PORT}`));
+    } catch (err) {
+      console.error('Error al iniciar servidor:', err);
+      process.exit(1);
+    }
+  };
+  
+  startServer();
+}
 
-// Iniciar el servidor
-startServer();
+// Exportar para entorno serverless
+module.exports = app;
